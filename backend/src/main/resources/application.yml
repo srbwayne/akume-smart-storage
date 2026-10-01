@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: akume-smart-storage
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/akume_storage}
+    username: ${DB_USERNAME:akume}
+    password: ${DB_PASSWORD:akume_local}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: ${SERVER_PORT:8080}
