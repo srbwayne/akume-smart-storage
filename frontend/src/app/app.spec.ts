@@ -1,9 +1,14 @@
 import { TestBed } from '@angular/core/testing';
+import { Component } from '@angular/core';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { provideRouter } from '@angular/router';
+import { provideRouter, Router, Routes } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { routes } from './app.routes';
+import { App } from './app';
+
+@Component({ standalone: true, template: '' })
+class StartPage {}
 
 describe('Address Types route', () => {
   it('renders the feature page from the explicit route', async () => {
@@ -18,5 +23,29 @@ describe('Address Types route', () => {
     harness.fixture.changeDetectorRef.detectChanges();
     expect((harness.routeNativeElement as HTMLElement).textContent).toContain('Tipos de endereço');
     expect((harness.routeNativeElement as HTMLElement).textContent).toContain('Novo tipo de endereço');
+  });
+
+  it('exposes Cadastros navigation and navigates to Address Types', async () => {
+    const testRoutes: Routes = [{ path: 'start', component: StartPage }, ...routes];
+    await TestBed.configureTestingModule({
+      imports: [App],
+      providers: [provideHttpClient(), provideHttpClientTesting(), provideRouter(testRoutes)],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    const router = TestBed.inject(Router);
+    await router.navigateByUrl('/start');
+    fixture.detectChanges();
+
+    const shell = fixture.nativeElement as HTMLElement;
+    const link = shell.querySelector('nav a[href="/address-types"]') as HTMLAnchorElement;
+    expect(shell.querySelector('nav')?.textContent).toContain('Cadastros');
+    expect(link.textContent).toContain('Tipos de endereço');
+    link.dispatchEvent(new MouseEvent('click', { button: 0, bubbles: true, cancelable: true }));
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(router.url).toBe('/address-types');
+    TestBed.inject(HttpTestingController).expectOne('/api/address-types').flush([]);
   });
 });

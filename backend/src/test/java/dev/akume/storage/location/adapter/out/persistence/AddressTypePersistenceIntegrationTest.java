@@ -1,6 +1,7 @@
 package dev.akume.storage.location.adapter.out.persistence;
 
 import dev.akume.storage.location.application.port.out.AddressTypeRepository;
+import dev.akume.storage.location.application.service.AddressTypeActivationService;
 import dev.akume.storage.location.domain.model.AddressType;
 import dev.akume.storage.location.domain.exception.AddressTypeCodeAlreadyExistsException;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,6 +26,9 @@ class AddressTypePersistenceIntegrationTest {
 
     @Autowired
     private SpringDataAddressTypeRepository jpaAddressTypes;
+
+    @Autowired
+    private AddressTypeActivationService activationService;
 
     @BeforeEach
     void clearAddressTypes() {
@@ -58,6 +62,37 @@ class AddressTypePersistenceIntegrationTest {
         assertEquals("Estante", retrieved.name());
         assertNull(retrieved.description());
         assertTrue(retrieved.active());
+    }
+
+    @Test
+    void updatesExistingAddressTypeWithoutChangingIdentityCodeOrLifecycleState() {
+        AddressType source = AddressType.create("DRAWER", "Drawer", "Original");
+        AddressType persisted = addressTypes.save(source);
+
+        persisted.updateDetails("Storage Drawer", "Updated");
+        addressTypes.save(persisted);
+
+        AddressType reloaded = addressTypes.findById(source.id()).orElseThrow();
+        assertEquals(source.id(), reloaded.id());
+        assertEquals("DRAWER", reloaded.code());
+        assertEquals("Storage Drawer", reloaded.name());
+        assertEquals("Updated", reloaded.description());
+        assertTrue(reloaded.active());
+    }
+
+    @Test
+    void persistsDeactivationAndActivationThroughApplicationLifecyclePath() {
+        AddressType active = addressTypes.save(AddressType.create("LIFECYCLE", "Lifecycle", null));
+
+        activationService.deactivate(active.id());
+        AddressType inactiveReloaded = addressTypes.findById(active.id()).orElseThrow();
+        assertFalse(inactiveReloaded.active());
+
+        activationService.activate(active.id());
+        AddressType activeReloaded = addressTypes.findById(active.id()).orElseThrow();
+        assertTrue(activeReloaded.active());
+        assertEquals(active.id(), activeReloaded.id());
+        assertEquals("LIFECYCLE", activeReloaded.code());
     }
 
     @Test

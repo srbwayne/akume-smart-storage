@@ -50,6 +50,11 @@ describe('AddressTypeList', () => {
     expect((fixture.nativeElement as HTMLElement).textContent).toContain('Nenhum tipo de endereço cadastrado.');
   });
 
+  it('renders the inactive status label', () => {
+    finishInitialList([{ ...entry, active: false }]);
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Inativo');
+  });
+
   it('requires code for create', () => {
     finishInitialList();
     component.startCreate(); component.name = 'Shelf'; component.save();
@@ -74,6 +79,31 @@ describe('AddressTypeList', () => {
     expect(component.items.map(item => item.code)).toEqual(['SHELF']);
     expect(component.formVisible).toBe(false);
     expect(feedback.success).toHaveBeenCalledWith('Tipo de endereço criado com sucesso.');
+  });
+
+  it('prevents duplicate create submission while the request is pending', () => {
+    finishInitialList();
+    component.startCreate(); component.code = 'SHELF'; component.name = 'Shelf';
+    component.save(); component.save();
+    const requests = http.match('/api/address-types');
+    expect(requests).toHaveLength(1);
+    expect(component.saving).toBe(true);
+    requests[0].flush({ id: 'a-2', code: 'SHELF', name: 'Shelf', description: null, active: true });
+    expect(component.saving).toBe(false);
+  });
+
+  it('clears save pending state and allows retry after a network failure', () => {
+    finishInitialList();
+    component.startCreate(); component.code = 'SHELF'; component.name = 'Shelf'; component.save();
+    http.expectOne('/api/address-types').error(new ProgressEvent('error'));
+    expect(component.saving).toBe(false);
+    expect(feedback.error).toHaveBeenCalledWith('Não foi possível concluir a solicitação. Verifique sua conexão e tente novamente.');
+
+    component.save();
+    const retry = http.expectOne('/api/address-types');
+    retry.flush({ id: 'a-2', code: 'SHELF', name: 'Shelf', description: null, active: true });
+    expect(component.saving).toBe(false);
+    expect(component.items[0].id).toBe('a-2');
   });
 
   it('does not allow code mutation while editing', () => {
@@ -141,5 +171,19 @@ describe('AddressTypeList', () => {
     const requests = http.match('/api/address-types/a-1/deactivate');
     expect(requests).toHaveLength(1);
     requests[0].flush({ ...entry, active: false });
+  });
+
+  it('clears lifecycle pending state and allows retry after an error', () => {
+    finishInitialList([entry]);
+    component.setActive(entry, false);
+    http.expectOne('/api/address-types/a-1/deactivate').error(new ProgressEvent('error'));
+    expect(component.busyIds.has(entry.id)).toBe(false);
+    expect(component.items[0].active).toBe(true);
+
+    component.setActive(entry, false);
+    const retry = http.expectOne('/api/address-types/a-1/deactivate');
+    retry.flush({ ...entry, active: false });
+    expect(component.busyIds.has(entry.id)).toBe(false);
+    expect(component.items[0].active).toBe(false);
   });
 });
