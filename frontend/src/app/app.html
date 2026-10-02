@@ -1,14 +1,10 @@
 <main class="shell">
   <header class="shell__header">
-    <span class="shell__eyebrow">Akumé</span>
-    <h1>{{ title }}</h1>
+    <a routerLink="/address-types" class="brand"><span class="shell__eyebrow">Akumé</span><h1>{{ title }}</h1></a>
+    <nav aria-label="Cadastros">
+      <span>Cadastros</span>
+      <a routerLink="/address-types" routerLinkActive="active">Tipos de endereço</a>
+    </nav>
   </header>
-
-  <section class="shell__welcome" aria-labelledby="welcome-title">
-    <div>
-      <h2 id="welcome-title">Storage foundation</h2>
-      <p>The application shell is ready for the V1 workflows.</p>
-    </div>
-    <po-button p-label="Foundation ready" p-kind="primary" [p-disabled]="true"></po-button>
-  </section>
+  <router-outlet></router-outlet>
 </main>

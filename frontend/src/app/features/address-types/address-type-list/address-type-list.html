@@ -1,0 +1,24 @@
+<po-page-default p-title="Tipos de endereço">
+  <po-button p-label="Novo tipo de endereço" p-kind="primary" (p-click)="startCreate()" [p-disabled]="saving"></po-button>
+  <section class="address-types">
+    <p *ngIf="loading" role="status">Carregando tipos de endereço...</p>
+    <p *ngIf="loadError" role="alert">{{ loadError }}</p>
+    <p *ngIf="!loading && !loadError && items.length === 0" class="empty-state">Nenhum tipo de endereço cadastrado.</p>
+    <po-table *ngIf="!loadError && items.length" [p-items]="items" [p-columns]="columns" [p-actions]="actions" [p-loading]="loading" [p-hide-columns-manager]="true" [p-hide-table-search]="true"></po-table>
+  </section>
+
+  <section *ngIf="formVisible" class="form-panel" aria-labelledby="form-title">
+    <h2 id="form-title">{{ editing ? 'Editar tipo de endereço' : 'Novo tipo de endereço' }}</h2>
+    <form (ngSubmit)="save()" novalidate>
+      <po-input *ngIf="!editing" name="code" p-label="Código *" [(ngModel)]="code" [p-required]="true" [p-disabled]="saving"></po-input>
+      <p *ngIf="!editing && submitted && !code.trim()" class="validation" role="alert">Informe o código.</p>
+      <po-input name="name" p-label="Nome *" [(ngModel)]="name" [p-required]="true" [p-disabled]="saving"></po-input>
+      <p *ngIf="submitted && !name.trim()" class="validation" role="alert">Informe o nome.</p>
+      <po-textarea name="description" p-label="Descrição" [(ngModel)]="description" [p-disabled]="saving"></po-textarea>
+      <div class="form-actions">
+        <po-button p-label="Cancelar" (p-click)="closeForm()" [p-disabled]="saving"></po-button>
+        <po-button p-label="Salvar" p-kind="primary" (p-click)="save()" [p-disabled]="saving"></po-button>
+      </div>
+    </form>
+  </section>
+</po-page-default>

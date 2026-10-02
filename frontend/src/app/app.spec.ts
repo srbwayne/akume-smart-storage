@@ -1,24 +1,22 @@
 import { TestBed } from '@angular/core/testing';
-import { App } from './app';
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { provideRouter } from '@angular/router';
+import { RouterTestingHarness } from '@angular/router/testing';
+import { routes } from './app.routes';
 
-describe('App', () => {
-  beforeEach(async () => {
+describe('Address Types route', () => {
+  it('renders the feature page from the explicit route', async () => {
     await TestBed.configureTestingModule({
-      imports: [App],
+      providers: [provideHttpClient(), provideHttpClientTesting(), provideRouter(routes)],
     }).compileComponents();
-  });
-
-  it('should create the app', () => {
-    const fixture = TestBed.createComponent(App);
-    const app = fixture.componentInstance;
-    expect(app).toBeTruthy();
-  });
-
-  it('renders the Akumé Smart Storage shell with PO UI', async () => {
-    const fixture = TestBed.createComponent(App);
-    await fixture.whenStable();
-    const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.querySelector('h1')?.textContent).toContain('Akumé Smart Storage');
-    expect(compiled.querySelector('po-button')).toBeTruthy();
+    const harness = await RouterTestingHarness.create();
+    const page = await harness.navigateByUrl('/address-types');
+    expect(page).toBeTruthy();
+    const request = TestBed.inject(HttpTestingController).expectOne('/api/address-types');
+    request.flush([]);
+    harness.fixture.changeDetectorRef.detectChanges();
+    expect((harness.routeNativeElement as HTMLElement).textContent).toContain('Tipos de endereço');
+    expect((harness.routeNativeElement as HTMLElement).textContent).toContain('Novo tipo de endereço');
   });
 });
