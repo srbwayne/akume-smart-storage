@@ -28,4 +28,6 @@ public interface AddressRepository {
     boolean isDescendant(UUID ancestorId, UUID candidateId);
 
     boolean hasActiveDirectChild(UUID parentId);
+
+    boolean existsActiveByAddressTypeId(UUID addressTypeId);
 }

@@ -140,6 +140,13 @@ class AddressPersistenceAdapter implements AddressRepository {
         return repository.existsByParentIdAndActiveTrue(parentId);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public boolean existsActiveByAddressTypeId(UUID addressTypeId) {
+        Objects.requireNonNull(addressTypeId, "addressTypeId must not be null");
+        return repository.existsByAddressTypeIdAndActiveTrue(addressTypeId);
+    }
+
     private static Address toDomain(AddressJpaEntity entity) {
         if (entity.getVersion() == null) {
             throw new IllegalStateException("persisted Address has no version");

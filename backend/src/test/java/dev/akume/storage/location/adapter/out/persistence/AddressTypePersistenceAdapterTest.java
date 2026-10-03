@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class AddressTypePersistenceAdapterTest {
@@ -23,5 +24,14 @@ class AddressTypePersistenceAdapterTest {
                 () -> adapter.save(AddressType.create("DRAWER", "Gaveta", null)));
 
         assertSame(failure, thrown);
+    }
+
+    @Test
+    void requiresAddressTypeIdForActiveUsageQuery() {
+        SpringDataAddressRepository repository = mock(SpringDataAddressRepository.class);
+        AddressPersistenceAdapter adapter = new AddressPersistenceAdapter(repository);
+
+        assertThrows(NullPointerException.class, () -> adapter.existsActiveByAddressTypeId(null));
+        verifyNoInteractions(repository);
     }
 }

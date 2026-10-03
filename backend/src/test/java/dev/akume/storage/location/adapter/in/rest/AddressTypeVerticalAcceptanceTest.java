@@ -1,18 +1,25 @@
 package dev.akume.storage.location.adapter.in.rest;
 
+import dev.akume.storage.location.application.port.out.AddressRepository;
+import dev.akume.storage.location.application.port.out.AddressTypeRepository;
+import dev.akume.storage.location.domain.model.Address;
+import dev.akume.storage.location.domain.model.AddressType;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -25,7 +32,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@Transactional
 class AddressTypeVerticalAcceptanceTest {
 
     private static final String CODE = "ACCEPTANCE_DRAWER";
@@ -33,6 +39,31 @@ class AddressTypeVerticalAcceptanceTest {
 
     @Autowired
     private MockMvc mvc;
+
+    @Autowired
+    private AddressRepository addresses;
+
+    @Autowired
+    private AddressTypeRepository addressTypes;
+
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    @BeforeEach
+    void clearBeforeTest() {
+        clearAcceptanceData();
+    }
+
+    @AfterEach
+    void clearAfterTest() {
+        clearAcceptanceData();
+    }
+
+    private void clearAcceptanceData() {
+        jdbc.update("DELETE FROM addresses WHERE address_type_id IN "
+                + "(SELECT id FROM address_types WHERE code = ?)", CODE);
+        jdbc.update("DELETE FROM address_types WHERE code = ?", CODE);
+    }
 
     @Test
     void completesCreateGetListUpdateDeactivateAndActivateAcrossTheRealStack() throws Exception {
@@ -112,6 +143,29 @@ class AddressTypeVerticalAcceptanceTest {
         assertFalse(duplicateBody.contains("PostgreSQL"));
         assertFalse(duplicateBody.contains("stackTrace"));
         assertFalse(duplicateBody.contains("Exception"));
+    }
+
+    @Test
+    void deactivationWithPersistedActiveAddressReturnsSemanticConflict() throws Exception {
+        MvcResult created = mvc.perform(post(COLLECTION)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\":\"ACCEPTANCE_DRAWER\",\"name\":\"Acceptance Drawer\"}"))
+                .andExpect(status().isCreated())
+                .andReturn();
+        UUID typeId = extractId(created);
+        AddressType persistedType = addressTypes.findById(typeId).orElseThrow();
+        Address persistedAddress = addresses.insert(Address.create(
+                "REST usage " + UUID.randomUUID(), persistedType.id(), null));
+
+        mvc.perform(post(COLLECTION + "/" + typeId + "/deactivate"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ADDRESS_TYPE_IN_USE"))
+                .andExpect(jsonPath("$.message").value("Address type is used by active addresses"));
+
+        assertTrue(addressTypes.findById(typeId).orElseThrow().active());
+        Address addressAfter = addresses.findById(persistedAddress.id()).orElseThrow();
+        assertEquals(persistedAddress.addressTypeId(), addressAfter.addressTypeId());
+        assertTrue(addressAfter.active());
     }
 
     @Test

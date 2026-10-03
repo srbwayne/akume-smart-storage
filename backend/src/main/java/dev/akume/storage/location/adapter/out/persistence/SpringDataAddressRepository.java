@@ -57,4 +57,6 @@ interface SpringDataAddressRepository extends JpaRepository<AddressJpaEntity, UU
             @Param("candidateId") UUID candidateId);
 
     boolean existsByParentIdAndActiveTrue(UUID parentId);
+
+    boolean existsByAddressTypeIdAndActiveTrue(UUID addressTypeId);
 }

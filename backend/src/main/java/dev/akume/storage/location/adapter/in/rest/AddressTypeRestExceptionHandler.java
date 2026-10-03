@@ -1,6 +1,7 @@
 package dev.akume.storage.location.adapter.in.rest;
 
 import dev.akume.storage.location.application.exception.AddressTypeNotFoundException;
+import dev.akume.storage.location.application.exception.AddressTypeInUseException;
 import dev.akume.storage.location.domain.exception.AddressTypeCodeAlreadyExistsException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
@@ -23,6 +24,12 @@ public class AddressTypeRestExceptionHandler {
     public ResponseEntity<RestErrorResponse> duplicateCode(
             AddressTypeCodeAlreadyExistsException exception, HttpServletRequest request) {
         return error(HttpStatus.CONFLICT, "ADDRESS_TYPE_CODE_ALREADY_EXISTS", "Address type code already exists", request);
+    }
+
+    @ExceptionHandler(AddressTypeInUseException.class)
+    public ResponseEntity<RestErrorResponse> inUse(AddressTypeInUseException exception, HttpServletRequest request) {
+        return error(HttpStatus.CONFLICT, "ADDRESS_TYPE_IN_USE",
+                "Address type is used by active addresses", request);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

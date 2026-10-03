@@ -1,5 +1,6 @@
 package dev.akume.storage.location.adapter.in.rest;
 
+import dev.akume.storage.location.application.exception.AddressTypeInUseException;
 import dev.akume.storage.location.application.exception.AddressTypeNotFoundException;
 import dev.akume.storage.location.application.port.in.ActivateAddressTypeUseCase;
 import dev.akume.storage.location.application.port.in.CreateAddressTypeCommand;
@@ -209,6 +210,19 @@ class AddressTypeRestControllerTest {
                 .andExpect(status().isNotFound());
         mvc.perform(post("/api/address-types/{id}/deactivate", missingId))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void mapsAddressTypeInUseToSafeConflictResponse() throws Exception {
+        org.mockito.Mockito.doThrow(new AddressTypeInUseException(id))
+                .when(deactivateAddressType).deactivate(id);
+
+        mvc.perform(post("/api/address-types/{id}/deactivate", id))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ADDRESS_TYPE_IN_USE"))
+                .andExpect(jsonPath("$.message").value("Address type is used by active addresses"))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("SQL"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Exception"))));
     }
 
     @Test
