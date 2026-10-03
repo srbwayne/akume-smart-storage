@@ -5,6 +5,7 @@ import dev.akume.storage.location.application.exception.AddressHasActiveChildren
 import dev.akume.storage.location.application.exception.AddressTypeInUseException;
 import dev.akume.storage.location.application.exception.InactiveAddressParentException;
 import dev.akume.storage.location.application.exception.InactiveAddressTypeException;
+import dev.akume.storage.location.application.exception.SerializableOperationConflictException;
 import dev.akume.storage.location.application.port.in.ActivateAddressCommand;
 import dev.akume.storage.location.application.port.in.ActivateAddressUseCase;
 import dev.akume.storage.location.application.port.in.CreateAddressCommand;
@@ -178,10 +179,27 @@ class AddressConcurrencyAcceptanceTest {
         Address parentAfter = reload(parent.id());
         List<Address> children = addresses.findDirectChildren(parent.id());
 
-        assertExactlyOneSuccessAndRejection(result);
-        assertRetryObserved(result);
-        assertEquals(2, writeGate.successfulArrivals().size(), result.diagnostics());
+        // The committed database state is authoritative. Check the safety invariant before
+        // classifying terminal outcomes, so an unexpected outcome cannot mask a violation.
         assertTrue(children.stream().noneMatch(Address::active) || parentAfter.active(), result.diagnostics());
+        assertTrue(result.failedBeforeGate().isEmpty(), result.diagnostics());
+        assertEquals(2, writeGate.successfulArrivals().size(), result.diagnostics());
+
+        Outcome childOutcome = result.firstOutcome();
+        Outcome parentOutcome = result.secondOutcome();
+        if (isSuccess(childOutcome)
+                && isSemanticRejection(parentOutcome, AddressHasActiveChildrenException.class)) {
+            assertActorRetried(result, "PARENT_DEACTIVATE");
+        } else if (isSuccess(childOutcome) && isSerializationExhausted(parentOutcome)) {
+            assertActorExhausted(result, "PARENT_DEACTIVATE", parentOutcome);
+        } else if (isSemanticRejection(childOutcome, InactiveAddressParentException.class)
+                && isSuccess(parentOutcome)) {
+            assertActorRetried(result, "CHILD_CREATE");
+        } else if (isSerializationExhausted(childOutcome) && isSuccess(parentOutcome)) {
+            assertActorExhausted(result, "CHILD_CREATE", childOutcome);
+        } else {
+            fail("unexpected Race B terminal outcome pair: " + result.diagnostics());
+        }
     }
 
     @Test
@@ -382,6 +400,44 @@ class AddressConcurrencyAcceptanceTest {
                 assertNotEquals(ids.get(0), ids.get(1), "retry reused transaction for " + actor + ": " + result.diagnostics());
             }
         });
+    }
+
+    private void assertActorRetried(RaceResult result, String actor) {
+        List<Long> transactionIds = result.attempts().get(actor);
+        assertTrue(transactionIds != null && transactionIds.size() >= 2,
+                "expected semantic loser to retry in a fresh transaction for " + actor + ": "
+                        + result.diagnostics());
+        assertNotEquals(transactionIds.getFirst(), transactionIds.get(1),
+                "semantic retry reused transaction for " + actor + ": " + result.diagnostics());
+    }
+
+    private void assertActorExhausted(RaceResult result, String actor, Outcome outcome) {
+        assertTrue(outcome.failure() instanceof SerializableOperationConflictException,
+                "exhaustion must be the executor's semantic exhaustion exception for " + actor + ": "
+                        + result.diagnostics());
+        List<Long> transactionIds = result.attempts().get(actor);
+        assertTrue(transactionIds != null, "missing transaction attempts for exhausted actor " + actor);
+        assertEquals(3, transactionIds.size(),
+                "executor exhaustion requires three distinct transaction attempts for " + actor + ": "
+                        + result.diagnostics());
+        assertEquals(3, transactionIds.stream().distinct().count(),
+                "exhaustion attempts must use distinct PostgreSQL transactions for " + actor + ": "
+                        + result.diagnostics());
+    }
+
+    private boolean isSuccess(Outcome outcome) {
+        return outcome.kind() == OutcomeKind.SUCCESS && outcome.failure() == null;
+    }
+
+    private boolean isSemanticRejection(Outcome outcome, Class<? extends RuntimeException> expectedType) {
+        return outcome.kind() == OutcomeKind.SEMANTIC_REJECTION
+                && outcome.failure() != null
+                && outcome.failure().getClass() == expectedType;
+    }
+
+    private boolean isSerializationExhausted(Outcome outcome) {
+        return outcome.kind() == OutcomeKind.SERIALIZATION_EXHAUSTED
+                && outcome.failure() instanceof SerializableOperationConflictException;
     }
 
     private String diagnostics(String firstActor, String secondActor) {
