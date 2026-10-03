@@ -31,3 +31,7 @@ frontend/coverage/
 **/*.dump
 **/pgdata/
 **/postgres-data/
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db

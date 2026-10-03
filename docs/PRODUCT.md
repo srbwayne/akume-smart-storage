@@ -1,16 +1,18 @@
-# Product Definition
+# Product Vision and Target Scope
 
 ## Product
 
 **Akumé Smart Storage**
 
+This document describes the product vision and target V1 scope. It is not a claim that every listed capability is implemented. The current implementation status is tracked in the [root README](../README.md) and [V1 milestone plan](milestones/V1.md).
+
 ## Problem
 
 Physical components, cables, electronics, boards, tools, accessories, storage devices, and other objects become difficult to locate and manage as the Akumé environment grows.
 
-Akumé Smart Storage provides structured identification, physical addressing, inventory tracking, movements, and printable labels.
+The planned product aims to provide structured identification, physical addressing, inventory tracking, operation-driven movements, and printable labels as the corresponding milestones are completed.
 
-The system also serves as a practical logistics and terminal-automation study environment.
+The project also serves as a practical study environment for generic logistics and terminal-operation concepts.
 
 ## V1 objective
 
@@ -22,9 +24,9 @@ V1 must answer:
 4. How did it arrive at its current state?
 5. How can an item or address be physically identified?
 
-## V1 capabilities
+## Planned V1 capabilities
 
-### Address management
+### Target: Address management
 
 The user can:
 
@@ -42,7 +44,7 @@ Examples include room, cabinet, desk, drawer, shelf, box, rack, and compartment.
 
 Address types are data, not a closed Java enum.
 
-### Item management
+### Target: Item management
 
 The user can:
 
@@ -54,13 +56,13 @@ The user can:
 
 Examples include cables, electronics, boards, adapters, power supplies, tools, storage devices, components, and utensils.
 
-### Inventory
+### Target: Inventory
 
-The system exposes the current stored state of items, including current location and quantity when applicable.
+The target system will expose the current stored state of items, including current location and quantity when applicable.
 
-### Operations
+### Target: Operations
 
-V1 supports:
+The V1 scope includes:
 
 - `ENTRY`
 - `EXIT`
@@ -68,19 +70,19 @@ V1 supports:
 
 Operations provide traceability for physical inventory transitions.
 
-### Labels
+### Target: Labels
 
-The system can generate printable labels for items and addresses.
+The planned system can generate printable labels for items and addresses.
 
 Labels contain human-readable identification and QR Codes.
 
 Batch generation must be possible so multiple labels can be downloaded and printed.
 
-### Frontend
+### Target: Frontend
 
-The V1 user interface is implemented in Angular using PO UI.
+The target V1 user interface uses Angular and PO UI.
 
-It provides workflows for address types, addresses, categories, items, inventory consultation, operations, and labels.
+The planned V1 interface includes workflows for address types, addresses, categories, items, inventory consultation, operations, and labels. Currently, the implemented Angular/PO UI workflow is primarily AddressType management.
 
 ## Explicitly outside V1
 
@@ -100,9 +102,9 @@ The following are not V1 requirements:
 
 These capabilities may be evaluated in later milestones based on evidence obtained from V1 usage.
 
-## V1 success scenario
+## Target V1 success scenario
 
-The following workflow must be possible:
+The following workflow is the planned acceptance goal; it is not yet implemented end to end:
 
 1. create an address hierarchy;
 2. register an ESP32-S3;
