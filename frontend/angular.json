@@ -62,7 +62,8 @@
               "buildTarget": "akume-storage:build:production"
             },
             "development": {
-              "buildTarget": "akume-storage:build:development"
+              "buildTarget": "akume-storage:build:development",
+              "proxyConfig": "proxy.conf.json"
             }
           },
           "defaultConfiguration": "development"
