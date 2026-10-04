@@ -1,0 +1,25 @@
+<po-page-default p-title="Endereços">
+  <section class="address-hierarchy" aria-label="Hierarquia de endereços">
+    <p *ngIf="loadingRoots" role="status">Carregando endereços...</p>
+    <div *ngIf="rootError" role="alert">
+      <p>Não foi possível carregar os endereços.</p>
+      <po-button p-label="Tentar novamente" (p-click)="loadRoots()"></po-button>
+    </div>
+    <p *ngIf="treeRenderError" role="alert">Não foi possível representar a profundidade atual da hierarquia.</p>
+    <p *ngIf="!loadingRoots && !rootError && !treeRenderError && roots.length === 0" class="empty-state">
+      Nenhum endereço cadastrado.
+    </p>
+    <po-tree-view
+      *ngIf="!loadingRoots && !rootError && !treeRenderError && treeItems.length"
+      [p-max-level]="maxLevel"
+      [p-items]="treeItems"
+      [p-selectable]="true"
+      [p-single-select]="true"
+      (p-expanded)="onExpanded($event)"
+      (p-selected)="onSelected($event)"
+    ></po-tree-view>
+    <p *ngIf="selectedAddress" class="selected-address" aria-live="polite">
+      Endereço selecionado: {{ selectedAddress.name }}
+    </p>
+  </section>
+</po-page-default>
