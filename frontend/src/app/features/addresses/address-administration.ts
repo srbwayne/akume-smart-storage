@@ -5,7 +5,7 @@ import { forkJoin, Subscription } from 'rxjs';
 import { PoButtonModule, PoFieldModule, PoPageModule, PoTreeViewItem, PoTreeViewModule } from '@po-ui/ng-components';
 import { AddressTypeService } from '../address-types/address-type.service';
 import { AddressType } from '../address-types/address-type.model';
-import { Address, CreateAddressRequest, RenameAddressRequest } from './address.model';
+import { Address, CreateAddressRequest, MoveAddressRequest, RenameAddressRequest } from './address.model';
 import { AddressService } from './address.service';
 
 type ChildLoadState = 'unloaded' | 'loading' | 'loaded' | 'error';
@@ -35,6 +35,8 @@ export class AddressAdministration implements OnInit {
   readonly addresses = new Map<string, Address>();
   readonly expandedIds = new Set<string>();
   private readonly childRequests = new Map<string, Subscription>();
+  private rootReadGeneration = 0;
+  private moveOptionsRequest: Subscription | null = null;
   selectedAddressId: string | null = null;
   loadingRoots = true;
   rootError = false;
@@ -42,9 +44,12 @@ export class AddressAdministration implements OnInit {
   maxLevel = MIN_TREE_LEVELS_FOR_ROOT_PLACEHOLDER;
   createFormVisible = false;
   renameFormVisible = false;
+  moveFormVisible = false;
   loadingCreateOptions = false;
+  loadingMoveOptions = false;
   savingCreate = false;
   savingRename = false;
+  savingMove = false;
   createSubmitted = false;
   renameSubmitted = false;
   createName = '';
@@ -53,10 +58,15 @@ export class AddressAdministration implements OnInit {
   renameName = '';
   createError = '';
   renameError = '';
+  moveError = '';
   createOptionsError = '';
+  moveOptionsError = '';
   addressTypeOptions: Array<{ label: string; value: string }> = [];
   parentOptions: Array<{ label: string; value: string }> = [{ label: 'Endereço raiz', value: '' }];
+  moveDestinationId = '';
+  moveDestinationOptions: Array<{ label: string; value: string }> = [{ label: 'Endereço raiz', value: '' }];
   private renameTarget: Address | null = null;
+  moveTarget: Address | null = null;
 
   get selectedAddress(): Address | null {
     return this.selectedAddressId ? this.addresses.get(this.selectedAddressId) ?? null : null;
@@ -67,11 +77,13 @@ export class AddressAdministration implements OnInit {
   }
 
   loadRoots(): void {
+    const generation = ++this.rootReadGeneration;
     this.loadingRoots = true;
     this.rootError = false;
     this.cancelChildRequests();
     this.service.listRoots().subscribe({
       next: roots => {
+        if (generation !== this.rootReadGeneration) return;
         this.roots = roots;
         this.addresses.clear();
         this.childStates.clear();
@@ -85,6 +97,7 @@ export class AddressAdministration implements OnInit {
         this.refreshTreeItems();
       },
       error: () => {
+        if (generation !== this.rootReadGeneration) return;
         this.loadingRoots = false;
         this.rootError = true;
       },
@@ -228,6 +241,127 @@ export class AddressAdministration implements OnInit {
       error: () => {
         this.savingRename = false;
         this.renameError = 'Não foi possível renomear o endereço. Verifique os dados e tente novamente.';
+      },
+    });
+  }
+
+  startMove(): void {
+    const address = this.selectedAddress;
+    if (!address || this.savingMove || this.moveFormVisible) return;
+    this.moveTarget = address;
+    this.moveDestinationId = address.parentId ?? '';
+    this.moveError = '';
+    this.moveFormVisible = true;
+    this.loadMoveDestinations(address);
+  }
+
+  loadMoveDestinations(source: Address = this.moveTarget!): void {
+    if (!source || this.loadingMoveOptions) return;
+    this.loadingMoveOptions = true;
+    this.moveOptionsError = '';
+    this.moveOptionsRequest = this.service.list().subscribe({
+      next: addresses => {
+        if (this.moveTarget?.id !== source.id || !this.moveFormVisible) return;
+        this.moveDestinationOptions = [
+          { label: 'Endereço raiz', value: '' },
+          ...addresses
+            .filter(address => address.id !== source.id && (!source.active || address.active))
+            .map(address => ({
+              label: address.active ? `${address.name} — ${address.id}` : `${address.name} (Inativo) — ${address.id}`,
+              value: address.id,
+            })),
+        ];
+        this.loadingMoveOptions = false;
+        this.moveOptionsRequest = null;
+      },
+      error: () => {
+        if (this.moveTarget?.id !== source.id || !this.moveFormVisible) return;
+        this.loadingMoveOptions = false;
+        this.moveOptionsError = 'Não foi possível carregar os destinos disponíveis.';
+        this.moveOptionsRequest = null;
+      },
+    });
+  }
+
+  closeMove(): void {
+    if (this.savingMove) return;
+    this.moveOptionsRequest?.unsubscribe();
+    this.moveOptionsRequest = null;
+    this.loadingMoveOptions = false;
+    this.moveFormVisible = false;
+    this.moveTarget = null;
+    this.moveError = '';
+  }
+
+  saveMove(): void {
+    if (!this.moveTarget || this.savingMove || this.loadingMoveOptions || this.moveOptionsError) return;
+
+    const target = this.moveTarget;
+    const request: MoveAddressRequest = {
+      newParentId: this.moveDestinationId || null,
+      expectedVersion: target.version,
+    };
+    this.savingMove = true;
+    this.moveError = '';
+    this.service.move(target.id, request).subscribe({
+      next: updated => {
+        this.replaceAddressSnapshot(updated);
+        this.savingMove = false;
+        this.moveFormVisible = false;
+        this.moveTarget = null;
+        this.moveError = '';
+        this.reconcileMovedAddress(target, updated);
+      },
+      error: () => {
+        this.savingMove = false;
+        this.moveError = 'Não foi possível mover o endereço. Verifique o destino e tente novamente.';
+      },
+    });
+  }
+
+  private reconcileMovedAddress(previous: Address, updated: Address): void {
+    if (previous.parentId === updated.parentId) {
+      this.refreshTreeItems();
+      return;
+    }
+
+    if (previous.parentId) this.invalidateParentChildren(previous.parentId);
+    if (updated.parentId) this.invalidateParentChildren(updated.parentId);
+
+    if (previous.parentId === null || updated.parentId === null) this.reloadRootsAfterMove();
+  }
+
+  private invalidateParentChildren(parentId: string): void {
+    if (!this.childStates.has(parentId)) return;
+    this.childRequests.get(parentId)?.unsubscribe();
+    this.childRequests.delete(parentId);
+    this.loadedChildren.delete(parentId);
+    this.childStates.set(parentId, 'unloaded');
+    this.refreshTreeItems();
+    if (this.expandedIds.has(parentId)) this.loadChildren(parentId);
+  }
+
+  private reloadRootsAfterMove(): void {
+    const generation = ++this.rootReadGeneration;
+    this.roots = [];
+    this.treeItems = [];
+    this.loadingRoots = true;
+    this.rootError = false;
+    this.service.listRoots().subscribe({
+      next: roots => {
+        if (generation !== this.rootReadGeneration) return;
+        this.roots = roots;
+        for (const root of roots) {
+          this.addresses.set(root.id, root);
+          if (!this.childStates.has(root.id)) this.childStates.set(root.id, 'unloaded');
+        }
+        this.loadingRoots = false;
+        this.refreshTreeItems();
+      },
+      error: () => {
+        if (generation !== this.rootReadGeneration) return;
+        this.loadingRoots = false;
+        this.rootError = true;
       },
     });
   }
