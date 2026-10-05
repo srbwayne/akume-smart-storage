@@ -1,4 +1,43 @@
 <po-page-default p-title="Endereços">
+  <div class="page-actions">
+    <po-button p-label="Novo endereço" p-kind="primary" (p-click)="startCreate()" [p-disabled]="savingCreate"></po-button>
+    <po-button *ngIf="selectedAddress" p-label="Renomear endereço selecionado" (p-click)="startRename()" [p-disabled]="savingRename"></po-button>
+  </div>
+
+  <section *ngIf="createFormVisible" class="form-panel" aria-labelledby="create-title">
+    <h2 id="create-title">Novo endereço</h2>
+    <p *ngIf="loadingCreateOptions" role="status">Carregando tipos e endereços disponíveis...</p>
+    <div *ngIf="createOptionsError" role="alert">
+      <p>{{ createOptionsError }}</p>
+      <po-button p-label="Tentar carregar novamente" (p-click)="loadCreateOptions()" [p-disabled]="loadingCreateOptions"></po-button>
+    </div>
+    <form (ngSubmit)="saveCreate()" novalidate>
+      <po-input name="createName" p-label="Nome *" [(ngModel)]="createName" [p-required]="true" [p-disabled]="savingCreate || loadingCreateOptions || !!createOptionsError"></po-input>
+      <p *ngIf="createSubmitted && !createName.trim()" class="validation" role="alert">Informe o nome.</p>
+      <po-select name="createAddressTypeId" p-label="Tipo de endereço *" [p-options]="addressTypeOptions" [ngModel]="createAddressTypeId" (ngModelChange)="createAddressTypeId = $event" [p-required]="true" [p-disabled]="savingCreate || loadingCreateOptions || !!createOptionsError"></po-select>
+      <p *ngIf="createSubmitted && !createAddressTypeId" class="validation" role="alert">Selecione o tipo de endereço.</p>
+      <po-select name="createParentId" p-label="Endereço pai (opcional)" [p-options]="parentOptions" [ngModel]="createParentId" (ngModelChange)="createParentId = $event" [p-disabled]="savingCreate || loadingCreateOptions || !!createOptionsError"></po-select>
+      <p *ngIf="createError" role="alert">{{ createError }}</p>
+      <div class="form-actions">
+        <po-button p-label="Cancelar" (p-click)="closeCreate()" [p-disabled]="savingCreate"></po-button>
+        <po-button p-label="Criar endereço" p-kind="primary" (p-click)="saveCreate()" [p-disabled]="savingCreate || loadingCreateOptions || !!createOptionsError"></po-button>
+      </div>
+    </form>
+  </section>
+
+  <section *ngIf="renameFormVisible" class="form-panel" aria-labelledby="rename-title">
+    <h2 id="rename-title">Renomear endereço</h2>
+    <form (ngSubmit)="saveRename()" novalidate>
+      <po-input name="renameName" p-label="Nome *" [(ngModel)]="renameName" [p-required]="true" [p-disabled]="savingRename"></po-input>
+      <p *ngIf="renameSubmitted && !renameName.trim()" class="validation" role="alert">Informe o nome.</p>
+      <p *ngIf="renameError" role="alert">{{ renameError }}</p>
+      <div class="form-actions">
+        <po-button p-label="Cancelar" (p-click)="closeRename()" [p-disabled]="savingRename"></po-button>
+        <po-button p-label="Salvar nome" p-kind="primary" (p-click)="saveRename()" [p-disabled]="savingRename"></po-button>
+      </div>
+    </form>
+  </section>
+
   <section class="address-hierarchy" aria-label="Hierarquia de endereços">
     <p *ngIf="loadingRoots" role="status">Carregando endereços...</p>
     <div *ngIf="rootError" role="alert">

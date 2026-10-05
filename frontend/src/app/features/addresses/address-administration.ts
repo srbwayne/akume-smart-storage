@@ -1,7 +1,11 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnInit, inject } from '@angular/core';
-import { PoButtonModule, PoPageModule, PoTreeViewItem, PoTreeViewModule } from '@po-ui/ng-components';
-import { Address } from './address.model';
+import { FormsModule } from '@angular/forms';
+import { forkJoin, Subscription } from 'rxjs';
+import { PoButtonModule, PoFieldModule, PoPageModule, PoTreeViewItem, PoTreeViewModule } from '@po-ui/ng-components';
+import { AddressTypeService } from '../address-types/address-type.service';
+import { AddressType } from '../address-types/address-type.model';
+import { Address, CreateAddressRequest, RenameAddressRequest } from './address.model';
 import { AddressService } from './address.service';
 
 type ChildLoadState = 'unloaded' | 'loading' | 'loaded' | 'error';
@@ -16,12 +20,13 @@ const MIN_TREE_LEVELS_FOR_ROOT_PLACEHOLDER = 2;
 @Component({
   selector: 'app-address-administration',
   standalone: true,
-  imports: [CommonModule, PoButtonModule, PoPageModule, PoTreeViewModule],
+  imports: [CommonModule, FormsModule, PoButtonModule, PoFieldModule, PoPageModule, PoTreeViewModule],
   templateUrl: './address-administration.html',
   styleUrl: './address-administration.scss',
 })
 export class AddressAdministration implements OnInit {
   private readonly service = inject(AddressService);
+  private readonly addressTypeService = inject(AddressTypeService);
 
   roots: Address[] = [];
   treeItems: AddressTreeItem[] = [];
@@ -29,11 +34,29 @@ export class AddressAdministration implements OnInit {
   readonly loadedChildren = new Map<string, Address[]>();
   readonly addresses = new Map<string, Address>();
   readonly expandedIds = new Set<string>();
+  private readonly childRequests = new Map<string, Subscription>();
   selectedAddressId: string | null = null;
   loadingRoots = true;
   rootError = false;
   treeRenderError = false;
   maxLevel = MIN_TREE_LEVELS_FOR_ROOT_PLACEHOLDER;
+  createFormVisible = false;
+  renameFormVisible = false;
+  loadingCreateOptions = false;
+  savingCreate = false;
+  savingRename = false;
+  createSubmitted = false;
+  renameSubmitted = false;
+  createName = '';
+  createAddressTypeId = '';
+  createParentId = '';
+  renameName = '';
+  createError = '';
+  renameError = '';
+  createOptionsError = '';
+  addressTypeOptions: Array<{ label: string; value: string }> = [];
+  parentOptions: Array<{ label: string; value: string }> = [{ label: 'Endereço raiz', value: '' }];
+  private renameTarget: Address | null = null;
 
   get selectedAddress(): Address | null {
     return this.selectedAddressId ? this.addresses.get(this.selectedAddressId) ?? null : null;
@@ -46,6 +69,7 @@ export class AddressAdministration implements OnInit {
   loadRoots(): void {
     this.loadingRoots = true;
     this.rootError = false;
+    this.cancelChildRequests();
     this.service.listRoots().subscribe({
       next: roots => {
         this.roots = roots;
@@ -90,13 +114,132 @@ export class AddressAdministration implements OnInit {
     }
   }
 
+  startCreate(): void {
+    if (this.savingCreate) return;
+    this.createFormVisible = true;
+    this.createSubmitted = false;
+    this.createName = '';
+    this.createAddressTypeId = '';
+    this.createParentId = '';
+    this.createError = '';
+    this.loadCreateOptions();
+  }
+
+  loadCreateOptions(): void {
+    if (this.loadingCreateOptions) return;
+    this.loadingCreateOptions = true;
+    this.createOptionsError = '';
+    forkJoin({
+      types: this.addressTypeService.list(),
+      addresses: this.service.list(),
+    }).subscribe({
+      next: ({ types, addresses }) => {
+        this.addressTypeOptions = types
+          .filter((type: AddressType) => type.active)
+          .map(type => ({ label: `${type.code} — ${type.name}`, value: type.id }));
+        this.parentOptions = [
+          { label: 'Endereço raiz', value: '' },
+          ...addresses
+            .filter(address => address.active)
+            .map(address => ({ label: `${address.name} — ${address.id}`, value: address.id })),
+        ];
+        this.loadingCreateOptions = false;
+      },
+      error: () => {
+        this.loadingCreateOptions = false;
+        this.createOptionsError = 'Não foi possível carregar os dados para criar o endereço.';
+      },
+    });
+  }
+
+  closeCreate(): void {
+    if (this.savingCreate) return;
+    this.createFormVisible = false;
+    this.createError = '';
+  }
+
+  saveCreate(): void {
+    this.createSubmitted = true;
+    if (!this.createName.trim() || !this.createAddressTypeId || this.savingCreate || this.loadingCreateOptions || this.createOptionsError) return;
+
+    const request: CreateAddressRequest = {
+      name: this.createName.trim(),
+      addressTypeId: this.createAddressTypeId,
+    };
+    if (this.createParentId) request.parentId = this.createParentId;
+
+    this.savingCreate = true;
+    this.createError = '';
+    this.service.create(request).subscribe({
+      next: created => {
+        this.savingCreate = false;
+        this.createFormVisible = false;
+        this.createName = '';
+        this.createAddressTypeId = '';
+        this.createParentId = '';
+        this.createSubmitted = false;
+        if (created.parentId) this.refreshParentChildren(created.parentId);
+        else this.loadRoots();
+      },
+      error: () => {
+        this.savingCreate = false;
+        this.createError = 'Não foi possível criar o endereço. Verifique os dados e tente novamente.';
+      },
+    });
+  }
+
+  startRename(): void {
+    const address = this.selectedAddress;
+    if (!address || this.savingRename) return;
+    this.renameTarget = address;
+    this.renameName = address.name;
+    this.renameSubmitted = false;
+    this.renameError = '';
+    this.renameFormVisible = true;
+  }
+
+  closeRename(): void {
+    if (this.savingRename) return;
+    this.renameFormVisible = false;
+    this.renameTarget = null;
+    this.renameError = '';
+  }
+
+  saveRename(): void {
+    this.renameSubmitted = true;
+    if (!this.renameTarget || !this.renameName.trim() || this.savingRename) return;
+
+    const target = this.renameTarget;
+    const request: RenameAddressRequest = {
+      name: this.renameName.trim(),
+      expectedVersion: target.version,
+    };
+    this.savingRename = true;
+    this.renameError = '';
+    this.service.rename(target.id, request).subscribe({
+      next: updated => {
+        this.replaceAddressSnapshot(updated);
+        this.savingRename = false;
+        this.renameFormVisible = false;
+        this.renameTarget = null;
+        this.renameSubmitted = false;
+        this.renameError = '';
+      },
+      error: () => {
+        this.savingRename = false;
+        this.renameError = 'Não foi possível renomear o endereço. Verifique os dados e tente novamente.';
+      },
+    });
+  }
+
   private loadChildren(id: string): void {
     if (this.childStates.get(id) === 'loading' || this.childStates.get(id) === 'loaded') return;
 
     this.childStates.set(id, 'loading');
     this.refreshTreeItems();
-    this.service.listChildren(id).subscribe({
+    const request = this.service.listChildren(id).subscribe({
       next: children => {
+        this.childRequests.delete(id);
         this.loadedChildren.set(id, children);
         this.childStates.set(id, 'loaded');
         for (const child of children) {
@@ -106,10 +249,36 @@ export class AddressAdministration implements OnInit {
         this.refreshTreeItems();
       },
       error: () => {
+        this.childRequests.delete(id);
         this.childStates.set(id, 'error');
         this.refreshTreeItems();
       },
     });
+    this.childRequests.set(id, request);
+  }
+
+  private refreshParentChildren(parentId: string): void {
+    if (!this.childStates.has(parentId)) return;
+    this.childRequests.get(parentId)?.unsubscribe();
+    this.childRequests.delete(parentId);
+    this.loadedChildren.delete(parentId);
+    this.childStates.set(parentId, 'unloaded');
+    this.refreshTreeItems();
+    if (this.expandedIds.has(parentId)) this.loadChildren(parentId);
+  }
+
+  private replaceAddressSnapshot(updated: Address): void {
+    this.addresses.set(updated.id, updated);
+    this.roots = this.roots.map(address => address.id === updated.id ? updated : address);
+    for (const [parentId, children] of this.loadedChildren) {
+      this.loadedChildren.set(parentId, children.map(address => address.id === updated.id ? updated : address));
+    }
+    this.refreshTreeItems();
+  }
+
+  private cancelChildRequests(): void {
+    for (const request of this.childRequests.values()) request.unsubscribe();
+    this.childRequests.clear();
   }
 
   private refreshTreeItems(): void {
