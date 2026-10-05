@@ -1,14 +1,17 @@
 import { CommonModule } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import { Component, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { forkJoin, Subscription } from 'rxjs';
 import { PoButtonModule, PoFieldModule, PoPageModule, PoTreeViewItem, PoTreeViewModule } from '@po-ui/ng-components';
 import { AddressTypeService } from '../address-types/address-type.service';
 import { AddressType } from '../address-types/address-type.model';
-import { Address, CreateAddressRequest, MoveAddressRequest, RenameAddressRequest } from './address.model';
+import { Address, AddressLifecycleRequest, CreateAddressRequest, MoveAddressRequest, RenameAddressRequest } from './address.model';
 import { AddressService } from './address.service';
 
 type ChildLoadState = 'unloaded' | 'loading' | 'loaded' | 'error';
+type LifecycleAction = 'activate' | 'deactivate';
+type LifecycleErrorKind = 'concurrency' | 'domain' | 'generic' | null;
 
 export type AddressTreeItem = PoTreeViewItem & {
   kind: 'address' | 'placeholder';
@@ -50,6 +53,8 @@ export class AddressAdministration implements OnInit {
   savingCreate = false;
   savingRename = false;
   savingMove = false;
+  savingLifecycle = false;
+  recoveringLifecycle = false;
   createSubmitted = false;
   renameSubmitted = false;
   createName = '';
@@ -59,6 +64,10 @@ export class AddressAdministration implements OnInit {
   createError = '';
   renameError = '';
   moveError = '';
+  lifecycleError = '';
+  lifecycleErrorKind: LifecycleErrorKind = null;
+  lifecycleRecoveryError = '';
+  lifecycleStatus = '';
   createOptionsError = '';
   moveOptionsError = '';
   addressTypeOptions: Array<{ label: string; value: string }> = [];
@@ -66,7 +75,9 @@ export class AddressAdministration implements OnInit {
   moveDestinationId = '';
   moveDestinationOptions: Array<{ label: string; value: string }> = [{ label: 'Endereço raiz', value: '' }];
   private renameTarget: Address | null = null;
+  lifecycleConflictAddressId: string | null = null;
   moveTarget: Address | null = null;
+  lifecycleAction: LifecycleAction | null = null;
 
   get selectedAddress(): Address | null {
     return this.selectedAddressId ? this.addresses.get(this.selectedAddressId) ?? null : null;
@@ -317,6 +328,120 @@ export class AddressAdministration implements OnInit {
         this.moveError = 'Não foi possível mover o endereço. Verifique o destino e tente novamente.';
       },
     });
+  }
+
+  activateSelectedAddress(): void {
+    this.startLifecycle('activate');
+  }
+
+  deactivateSelectedAddress(): void {
+    this.startLifecycle('deactivate');
+  }
+
+  recoverLifecycleConflict(): void {
+    const id = this.lifecycleConflictAddressId;
+    if (!id || this.recoveringLifecycle || this.savingLifecycle) return;
+
+    this.recoveringLifecycle = true;
+    this.lifecycleRecoveryError = '';
+    this.service.get(id).subscribe({
+      next: current => {
+        const previous = this.addresses.get(id) ?? current;
+        this.supersedeRootRead();
+        this.replaceAddressSnapshot(current);
+        if (previous.parentId !== current.parentId) this.reconcileMovedAddress(previous, current);
+        else if (current.parentId && this.childRequests.has(current.parentId)) this.invalidateParentChildren(current.parentId);
+        this.selectedAddressId = id;
+        this.recoveringLifecycle = false;
+        this.lifecycleConflictAddressId = null;
+        this.lifecycleErrorKind = null;
+        this.lifecycleError = '';
+        this.lifecycleRecoveryError = '';
+        this.lifecycleStatus = 'Estado atualizado. Revise-o antes de iniciar outra ação.';
+      },
+      error: () => {
+        this.recoveringLifecycle = false;
+        this.lifecycleRecoveryError = 'Não foi possível atualizar o endereço. Tente novamente.';
+      },
+    });
+  }
+
+  private startLifecycle(action: LifecycleAction): void {
+    const selected = this.selectedAddress;
+    if (!selected || this.savingLifecycle || this.recoveringLifecycle || this.lifecycleConflictAddressId) return;
+    if ((action === 'activate' && selected.active) || (action === 'deactivate' && !selected.active)) return;
+
+    const snapshot = { ...selected };
+    const request: AddressLifecycleRequest = { expectedVersion: snapshot.version };
+    this.lifecycleAction = action;
+    this.savingLifecycle = true;
+    this.lifecycleError = '';
+    this.lifecycleErrorKind = null;
+    this.lifecycleRecoveryError = '';
+    this.lifecycleStatus = '';
+
+    const mutation = action === 'activate'
+      ? this.service.activate(snapshot.id, request)
+      : this.service.deactivate(snapshot.id, request);
+    mutation.subscribe({
+      next: updated => {
+        this.reconcileLifecycleSnapshot(snapshot, updated);
+        this.selectedAddressId = snapshot.id;
+        this.savingLifecycle = false;
+        this.lifecycleAction = null;
+        this.lifecycleError = '';
+        this.lifecycleErrorKind = null;
+        this.lifecycleStatus = action === 'activate' ? 'Endereço ativado.' : 'Endereço desativado.';
+      },
+      error: error => {
+        this.savingLifecycle = false;
+        this.lifecycleAction = null;
+        this.presentLifecycleError(error, snapshot);
+      },
+    });
+  }
+
+  private presentLifecycleError(error: unknown, snapshot: Address): void {
+    const code = error instanceof HttpErrorResponse && typeof error.error?.code === 'string' ? error.error.code : '';
+    this.lifecycleStatus = '';
+    this.lifecycleRecoveryError = '';
+    if (code === 'ADDRESS_CONCURRENT_MODIFICATION') {
+      this.lifecycleErrorKind = 'concurrency';
+      this.lifecycleConflictAddressId = snapshot.id;
+      this.lifecycleError = 'O endereço foi alterado desde o início da ação. Atualize o estado atual antes de tentar novamente.';
+      return;
+    }
+
+    const domainMessages: Record<string, string> = {
+      ADDRESS_HAS_ACTIVE_CHILDREN: 'O endereço não pode ser desativado enquanto tiver endereços filhos ativos.',
+      ADDRESS_TYPE_INACTIVE: 'O endereço não pode ser ativado porque seu tipo está inativo.',
+      ADDRESS_PARENT_INACTIVE: 'O endereço não pode ser ativado enquanto o endereço pai estiver inativo.',
+    };
+    if (domainMessages[code]) {
+      this.lifecycleErrorKind = 'domain';
+      this.lifecycleError = domainMessages[code];
+      return;
+    }
+
+    this.lifecycleErrorKind = 'generic';
+    this.lifecycleError = 'Não foi possível alterar o estado do endereço. Tente novamente.';
+  }
+
+  private reconcileLifecycleSnapshot(previous: Address, updated: Address): void {
+    this.supersedeRootRead();
+    if (previous.parentId !== updated.parentId) {
+      this.replaceAddressSnapshot(updated);
+      this.reconcileMovedAddress(previous, updated);
+      return;
+    }
+
+    if (updated.parentId && this.childRequests.has(updated.parentId)) this.invalidateParentChildren(updated.parentId);
+    this.replaceAddressSnapshot(updated);
+  }
+
+  private supersedeRootRead(): void {
+    this.rootReadGeneration += 1;
+    if (this.loadingRoots) this.loadingRoots = false;
   }
 
   private reconcileMovedAddress(previous: Address, updated: Address): void {
