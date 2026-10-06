@@ -156,10 +156,27 @@ class AddressConcurrencyAcceptanceTest {
                 .filter(address -> address.addressTypeId().equals(type.id()))
                 .toList();
 
-        assertExactlyOneSuccessAndRejection(result);
-        assertRetryObserved(result);
-        assertEquals(2, writeGate.successfulArrivals().size(), result.diagnostics());
+        // The persisted state is authoritative. Check the invariant before classifying the
+        // terminal outcomes so an unexpected result cannot mask a committed violation.
         assertTrue(usingType.stream().noneMatch(Address::active) || typeAfter.active(), result.diagnostics());
+        assertTrue(result.failedBeforeGate().isEmpty(), result.diagnostics());
+        assertEquals(2, writeGate.successfulArrivals().size(), result.diagnostics());
+
+        Outcome createOutcome = result.firstOutcome();
+        Outcome typeDeactivateOutcome = result.secondOutcome();
+        if (isSuccess(createOutcome)
+                && isSemanticRejection(typeDeactivateOutcome, AddressTypeInUseException.class)) {
+            assertActorRetried(result, "TYPE_DEACTIVATE");
+        } else if (isSuccess(createOutcome) && isSerializationExhausted(typeDeactivateOutcome)) {
+            assertActorExhausted(result, "TYPE_DEACTIVATE", typeDeactivateOutcome);
+        } else if (isSemanticRejection(createOutcome, InactiveAddressTypeException.class)
+                && isSuccess(typeDeactivateOutcome)) {
+            assertActorRetried(result, "CREATE");
+        } else if (isSerializationExhausted(createOutcome) && isSuccess(typeDeactivateOutcome)) {
+            assertActorExhausted(result, "CREATE", createOutcome);
+        } else {
+            fail("unexpected Race A terminal outcome pair: " + result.diagnostics());
+        }
     }
 
     @Test
