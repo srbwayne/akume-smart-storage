@@ -11,6 +11,19 @@ import { App } from './app';
 class StartPage {}
 
 describe('Address Types route', () => {
+  it('resolves /item-categories to the administration page', async () => {
+    await TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting(), provideRouter(routes)],
+    }).compileComponents();
+    const harness = await RouterTestingHarness.create();
+    const page = await harness.navigateByUrl('/item-categories');
+    expect(page).toBeTruthy();
+    TestBed.inject(HttpTestingController).expectOne('/api/item-categories').flush([]);
+    harness.fixture.changeDetectorRef.detectChanges();
+    expect((harness.routeNativeElement as HTMLElement).textContent).toContain('Categorias de itens');
+    expect((harness.routeNativeElement as HTMLElement).textContent).toContain('Nova categoria de itens');
+  });
+
   it('renders the feature page from the explicit route', async () => {
     await TestBed.configureTestingModule({
       providers: [provideHttpClient(), provideHttpClientTesting(), provideRouter(routes)],
@@ -62,5 +75,29 @@ describe('Address Types route', () => {
 
     expect(router.url).toBe('/address-types');
     TestBed.inject(HttpTestingController).expectOne('/api/address-types').flush([]);
+  });
+
+  it('exposes Item Categories under Cadastros navigation', async () => {
+    const testRoutes: Routes = [{ path: 'start', component: StartPage }, ...routes];
+    await TestBed.configureTestingModule({
+      imports: [App],
+      providers: [provideHttpClient(), provideHttpClientTesting(), provideRouter(testRoutes)],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    const router = TestBed.inject(Router);
+    await router.navigateByUrl('/start');
+    fixture.detectChanges();
+
+    const shell = fixture.nativeElement as HTMLElement;
+    const link = shell.querySelector('nav a[href="/item-categories"]') as HTMLAnchorElement;
+    expect(shell.querySelector('nav')?.textContent).toContain('Cadastros');
+    expect(link.textContent).toContain('Categorias de itens');
+    link.dispatchEvent(new MouseEvent('click', { button: 0, bubbles: true, cancelable: true }));
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(router.url).toBe('/item-categories');
+    TestBed.inject(HttpTestingController).expectOne('/api/item-categories').flush([]);
   });
 });

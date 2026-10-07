@@ -4,6 +4,7 @@ import { AddressTypeList } from './features/address-types/address-type-list/addr
 export const routes: Routes = [
   { path: 'addresses', loadComponent: () => import('./features/addresses/address-administration').then(page => page.AddressAdministration) },
   { path: 'address-types', component: AddressTypeList },
+  { path: 'item-categories', loadComponent: () => import('./features/item-categories/item-category-administration/item-category-administration').then(page => page.ItemCategoryAdministration) },
   { path: '', pathMatch: 'full', redirectTo: 'address-types' },
   { path: '**', redirectTo: 'address-types' },
 ];

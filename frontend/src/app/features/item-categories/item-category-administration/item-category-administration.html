@@ -1,0 +1,28 @@
+<po-page-default p-title="Categorias de itens">
+  <div class="page-actions">
+    <po-button p-label="Nova categoria de itens" p-kind="primary" (p-click)="startCreate()" [p-disabled]="saving"></po-button>
+    <po-button *ngIf="refreshRequired" p-label="Atualizar lista" (p-click)="load()" [p-disabled]="loading"></po-button>
+  </div>
+
+  <section class="categories" aria-live="polite">
+    <p *ngIf="loading" role="status">Carregando categorias de itens...</p>
+    <div *ngIf="loadError" role="alert">
+      <p>{{ loadError }}</p>
+      <po-button p-label="Tentar novamente" (p-click)="load()" [p-disabled]="loading"></po-button>
+    </div>
+    <p *ngIf="!loading && !loadError && items.length === 0" class="empty-state">Nenhuma categoria de itens cadastrada.</p>
+    <po-table *ngIf="!loadError && items.length" [p-items]="items" [p-columns]="columns" [p-actions]="actions" [p-loading]="loading" [p-hide-columns-manager]="true" [p-hide-table-search]="true"></po-table>
+  </section>
+
+  <section *ngIf="formVisible" class="form-panel" aria-labelledby="category-form-title">
+    <h2 id="category-form-title">{{ editing ? 'Renomear categoria de itens' : 'Nova categoria de itens' }}</h2>
+    <form (ngSubmit)="save()" novalidate>
+      <po-input name="name" p-label="Nome *" [(ngModel)]="name" [p-required]="true" [p-disabled]="saving"></po-input>
+      <p *ngIf="submitted && !name.trim()" class="validation" role="alert">Informe o nome da categoria.</p>
+      <div class="form-actions">
+        <po-button p-label="Cancelar" (p-click)="closeForm()" [p-disabled]="saving"></po-button>
+        <po-button [p-label]="editing ? 'Salvar nome' : 'Criar categoria'" p-kind="primary" (p-click)="save()" [p-disabled]="saving"></po-button>
+      </div>
+    </form>
+  </section>
+</po-page-default>
