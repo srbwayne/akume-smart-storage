@@ -238,11 +238,28 @@ class AddressConcurrencyAcceptanceTest {
         Address sourceAfter = reload(source.id());
         Address destinationAfter = reload(destination.id());
 
-        assertExactlyOneSuccessAndRejection(result);
-        assertRetryObserved(result);
-        assertEquals(2, writeGate.successfulArrivals().size(), result.diagnostics());
+        // The committed database state is authoritative. Check the safety invariant before
+        // classifying terminal outcomes, so an unexpected result cannot mask a violation.
         assertFalse(sourceAfter.active() && destination.id().equals(sourceAfter.parentId())
                 && !destinationAfter.active(), result.diagnostics());
+        assertTrue(result.failedBeforeGate().isEmpty(), result.diagnostics());
+        assertEquals(2, writeGate.successfulArrivals().size(), result.diagnostics());
+
+        Outcome moveOutcome = result.firstOutcome();
+        Outcome destinationDeactivateOutcome = result.secondOutcome();
+        if (isSuccess(moveOutcome)
+                && isSemanticRejection(destinationDeactivateOutcome, AddressHasActiveChildrenException.class)) {
+            assertActorRetried(result, "DESTINATION_DEACTIVATE");
+        } else if (isSuccess(moveOutcome) && isSerializationExhausted(destinationDeactivateOutcome)) {
+            assertActorExhausted(result, "DESTINATION_DEACTIVATE", destinationDeactivateOutcome);
+        } else if (isSemanticRejection(moveOutcome, InactiveAddressParentException.class)
+                && isSuccess(destinationDeactivateOutcome)) {
+            assertActorRetried(result, "MOVE");
+        } else if (isSerializationExhausted(moveOutcome) && isSuccess(destinationDeactivateOutcome)) {
+            assertActorExhausted(result, "MOVE", moveOutcome);
+        } else {
+            fail("unexpected Race C terminal outcome pair: " + result.diagnostics());
+        }
     }
 
     @Test
