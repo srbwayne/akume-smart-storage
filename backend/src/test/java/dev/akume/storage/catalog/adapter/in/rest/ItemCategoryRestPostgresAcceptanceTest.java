@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -133,6 +134,62 @@ class ItemCategoryRestPostgresAcceptanceTest {
                 .andExpect(jsonPath("$[?(@.id == '" + id + "' && @.active == false)]").exists());
         assertTrue(jdbc.queryForObject("SELECT COUNT(*) FROM item_categories WHERE name LIKE ?", Integer.class,
                 NAME_PREFIX + "%") >= 2);
+    }
+
+    @Test
+    void createsAndGetsCategoryThroughPostgres() throws Exception {
+        MvcResult created = mvc.perform(post(COLLECTION).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"  M304 acceptance Café create-get  \"}"))
+                .andExpect(status().isCreated())
+                .andReturn();
+        UUID id = extractId(created);
+
+        String expected = "{\"id\":\"" + id + "\",\"name\":\"M304 acceptance Café create-get\","
+                + "\"active\":true,\"version\":0}";
+        mvc.perform(get(COLLECTION + "/" + id))
+                .andExpect(status().isOk())
+                .andExpect(content().json(expected, true));
+
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM item_categories WHERE id = ? AND name = ? AND active = TRUE AND version = 0",
+                Integer.class, id, "M304 acceptance Café create-get"));
+    }
+
+    @Test
+    void rejectsStaleIdempotentLifecycleCommandWithoutChangingPostgresState() throws Exception {
+        String name = "M304 acceptance Stale lifecycle";
+        MvcResult created = mvc.perform(post(COLLECTION).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"" + name + "\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.active").value(true))
+                .andExpect(jsonPath("$.version").value(0))
+                .andReturn();
+        UUID id = extractId(created);
+        int initialVersion = versionFrom(created);
+
+        MvcResult deactivated = mvc.perform(post(COLLECTION + "/" + id + "/deactivate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedVersion\":" + initialVersion + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id.toString()))
+                .andExpect(jsonPath("$.name").value(name))
+                .andExpect(jsonPath("$.active").value(false))
+                .andReturn();
+        int updatedVersion = versionFrom(deactivated);
+        assertEquals(1, updatedVersion);
+
+        mvc.perform(post(COLLECTION + "/" + id + "/deactivate").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedVersion\":" + initialVersion + "}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ITEM_CATEGORY_CONCURRENT_MODIFICATION"));
+
+        mvc.perform(get(COLLECTION + "/" + id))
+                .andExpect(status().isOk())
+                .andExpect(content().json("{\"id\":\"" + id + "\",\"name\":\"" + name
+                        + "\",\"active\":false,\"version\":" + updatedVersion + "}", true));
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT COUNT(*) FROM item_categories WHERE id = ? AND name = ? AND active = FALSE AND version = ?",
+                Integer.class, id, name, updatedVersion));
     }
 
     private static UUID extractId(MvcResult result) throws Exception {
