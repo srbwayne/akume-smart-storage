@@ -4,6 +4,7 @@ import dev.akume.storage.catalog.application.exception.InactiveItemCategoryExcep
 import dev.akume.storage.catalog.application.exception.ItemCategoryNotFoundException;
 import dev.akume.storage.catalog.application.exception.ItemConcurrentModificationException;
 import dev.akume.storage.catalog.application.exception.ItemNotFoundException;
+import dev.akume.storage.catalog.application.model.ItemReadView;
 import dev.akume.storage.catalog.application.port.in.ActivateItemCommand;
 import dev.akume.storage.catalog.application.port.in.CreateItemCommand;
 import dev.akume.storage.catalog.application.port.in.DeactivateItemCommand;
@@ -11,6 +12,7 @@ import dev.akume.storage.catalog.application.port.in.ReassignItemCategoryCommand
 import dev.akume.storage.catalog.application.port.in.UpdateItemMetadataCommand;
 import dev.akume.storage.catalog.application.port.out.ItemCategoryAssignmentLock;
 import dev.akume.storage.catalog.application.port.out.ItemRepository;
+import dev.akume.storage.catalog.application.port.out.ItemReadProjectionRepository;
 import dev.akume.storage.catalog.domain.model.Item;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,7 +28,6 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -45,20 +46,29 @@ class ItemApplicationServiceTest {
     @Mock
     private ItemCategoryAssignmentLock categoryLock;
 
+    @Mock
+    private ItemReadProjectionRepository itemViews;
+
     private ItemApplicationService service;
 
     @BeforeEach
     void setUp() {
-        service = new ItemApplicationService(items, categoryLock);
+        service = new ItemApplicationService(items, categoryLock, itemViews);
     }
 
     @Test
     void createsItemOnlyAfterLockedCategoryIsConfirmedActive() {
         UUID categoryId = UUID.randomUUID();
         when(categoryLock.lockAndReadActive(categoryId)).thenReturn(Optional.of(true));
-        when(items.insert(any(Item.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        java.util.concurrent.atomic.AtomicReference<Item> insertedItem = new java.util.concurrent.atomic.AtomicReference<>();
+        when(items.insert(any(Item.class))).thenAnswer(invocation -> {
+            Item inserted = invocation.getArgument(0);
+            insertedItem.set(inserted);
+            return inserted;
+        });
+        when(itemViews.findById(any())).thenAnswer(invocation -> Optional.of(view(insertedItem.get())));
 
-        Item result = service.create(new CreateItemCommand("  Board  ", "  Dev kit ", categoryId));
+        ItemReadView result = service.create(new CreateItemCommand("  Board  ", "  Dev kit ", categoryId));
 
         InOrder order = inOrder(categoryLock, items);
         order.verify(categoryLock).lockAndReadActive(categoryId);
@@ -70,6 +80,7 @@ class ItemApplicationServiceTest {
         assertTrue(inserted.getValue().active());
         assertEquals(0, inserted.getValue().version());
         assertEquals(inserted.getValue().id(), result.id());
+        assertEquals(categoryId, result.category().id());
     }
 
     @Test
@@ -105,18 +116,18 @@ class ItemApplicationServiceTest {
     void listsActiveAndInactiveItemsAndGetsById() {
         Item active = item(true, 0);
         Item inactive = item(false, 1);
-        when(items.findAll()).thenReturn(List.of(active, inactive));
-        when(items.findById(active.id())).thenReturn(Optional.of(active));
+        when(itemViews.findAll()).thenReturn(List.of(view(active), view(inactive)));
+        when(itemViews.findById(active.id())).thenReturn(Optional.of(view(active)));
 
-        assertEquals(List.of(active, inactive), service.listAll());
-        assertSame(active, service.getById(active.id()));
+        assertEquals(List.of(view(active), view(inactive)), service.listAll());
+        assertEquals(view(active), service.getById(active.id()));
         verifyNoInteractions(categoryLock);
     }
 
     @Test
     void missingItemReadsUseApplicationNotFoundException() {
         UUID id = UUID.randomUUID();
-        when(items.findById(id)).thenReturn(Optional.empty());
+        when(itemViews.findById(id)).thenReturn(Optional.empty());
 
         assertThrows(ItemNotFoundException.class, () -> service.getById(id));
     }
@@ -131,7 +142,10 @@ class ItemApplicationServiceTest {
                     updated.itemCategoryId(), updated.active(), 5));
         });
 
-        Item result = service.updateMetadata(
+        when(itemViews.findById(stored.id())).thenReturn(Optional.of(new ItemReadView(
+                stored.id(), "New name", "New detail", stored.itemCategoryId(), true, 5,
+                new ItemReadView.CategorySummary(stored.itemCategoryId(), "Category", true))));
+        ItemReadView result = service.updateMetadata(
                 new UpdateItemMetadataCommand(stored.id(), " New name ", " New detail ", 4));
 
         ArgumentCaptor<Item> changed = ArgumentCaptor.forClass(Item.class);
@@ -152,7 +166,10 @@ class ItemApplicationServiceTest {
         when(categoryLock.lockAndReadActive(targetCategoryId)).thenReturn(Optional.of(true));
         when(items.update(any(Item.class))).thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
 
-        Item result = service.reassignCategory(
+        when(itemViews.findById(stored.id())).thenReturn(Optional.of(new ItemReadView(
+                stored.id(), stored.name(), stored.description(), targetCategoryId, true, 2,
+                new ItemReadView.CategorySummary(targetCategoryId, "Target", true))));
+        ItemReadView result = service.reassignCategory(
                 new ReassignItemCategoryCommand(stored.id(), targetCategoryId, 2));
 
         InOrder order = inOrder(items, categoryLock);
@@ -199,9 +216,11 @@ class ItemApplicationServiceTest {
         Item inactive = item(false, 6);
         when(items.findById(active.id())).thenReturn(Optional.of(active));
         when(items.findById(inactive.id())).thenReturn(Optional.of(inactive));
+        when(itemViews.findById(active.id())).thenReturn(Optional.of(view(active)));
+        when(itemViews.findById(inactive.id())).thenReturn(Optional.of(view(inactive)));
 
-        assertSame(active, service.activate(new ActivateItemCommand(active.id(), 5)));
-        assertSame(inactive, service.deactivate(new DeactivateItemCommand(inactive.id(), 6)));
+        assertEquals(view(active), service.activate(new ActivateItemCommand(active.id(), 5)));
+        assertEquals(view(inactive), service.deactivate(new DeactivateItemCommand(inactive.id(), 6)));
 
         verify(items, never()).update(any(Item.class));
         verifyNoInteractions(categoryLock);
@@ -236,5 +255,10 @@ class ItemApplicationServiceTest {
 
     private static Item item(boolean active, int version) {
         return Item.reconstitute(UUID.randomUUID(), "Board", null, UUID.randomUUID(), active, version);
+    }
+
+    private static ItemReadView view(Item item) {
+        return new ItemReadView(item.id(), item.name(), item.description(), item.itemCategoryId(), item.active(),
+                item.version(), new ItemReadView.CategorySummary(item.itemCategoryId(), "Category", true));
     }
 }

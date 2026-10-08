@@ -1,9 +1,9 @@
 package dev.akume.storage.catalog.application.port.in;
 
-import dev.akume.storage.catalog.domain.model.Item;
+import dev.akume.storage.catalog.application.model.ItemReadView;
 
 /** Creates an Item in an active category. */
 public interface CreateItemUseCase {
 
-    Item create(CreateItemCommand command);
+    ItemReadView create(CreateItemCommand command);
 }

@@ -3,6 +3,7 @@ package dev.akume.storage.catalog.application.service;
 import dev.akume.storage.catalog.application.exception.InactiveItemCategoryException;
 import dev.akume.storage.catalog.application.exception.ItemCategoryNotFoundException;
 import dev.akume.storage.catalog.application.exception.ItemConcurrentModificationException;
+import dev.akume.storage.catalog.application.model.ItemReadView;
 import dev.akume.storage.catalog.application.port.in.ActivateItemCommand;
 import dev.akume.storage.catalog.application.port.in.ActivateItemUseCase;
 import dev.akume.storage.catalog.application.port.in.CreateItemCommand;
@@ -102,7 +103,7 @@ class ItemApplicationIntegrationTest {
     void createsItemWithActiveCategoryAndPersistsVersionZero() {
         ItemCategory category = insertCategory("Hardware", true);
 
-        Item created = createItems.create(new CreateItemCommand("  Board  ", "  Dev kit  ", category.id()));
+        ItemReadView created = createItems.create(new CreateItemCommand("  Board  ", "  Dev kit  ", category.id()));
 
         Item persisted = items.findById(created.id()).orElseThrow();
         assertEquals(created.id(), persisted.id());
@@ -126,9 +127,9 @@ class ItemApplicationIntegrationTest {
     @Test
     void metadataUpdateDoesNotReassignCategoryAndReturnsPersistedVersion() {
         ItemCategory category = insertCategory("Hardware", true);
-        Item created = createItems.create(new CreateItemCommand("Board", null, category.id()));
+        ItemReadView created = createItems.create(new CreateItemCommand("Board", null, category.id()));
 
-        Item updated = updateMetadata.updateMetadata(
+        ItemReadView updated = updateMetadata.updateMetadata(
                 new UpdateItemMetadataCommand(created.id(), " Development board ", " S3 family ", 0));
 
         assertEquals(created.id(), updated.id());
@@ -142,7 +143,7 @@ class ItemApplicationIntegrationTest {
     void reassignmentRequiresActiveTargetAndPreservesItemWhenTargetIsInactive() {
         ItemCategory source = insertCategory("Source", true);
         ItemCategory target = insertCategory("Target", true);
-        Item created = createItems.create(new CreateItemCommand("Board", "Prototype", source.id()));
+        ItemReadView created = createItems.create(new CreateItemCommand("Board", "Prototype", source.id()));
         ItemCategory inactive = deactivateCategories.deactivate(
                 new DeactivateItemCategoryCommand(target.id(), target.version()));
 
@@ -160,14 +161,14 @@ class ItemApplicationIntegrationTest {
     @Test
     void lifecycleIsIdempotentChecksVersionFirstAndIgnoresInactiveExistingCategory() {
         ItemCategory category = insertCategory("Hardware", true);
-        Item created = createItems.create(new CreateItemCommand("Board", null, category.id()));
-        Item inactive = deactivateItems.deactivate(new DeactivateItemCommand(created.id(), 0));
+        ItemReadView created = createItems.create(new CreateItemCommand("Board", null, category.id()));
+        ItemReadView inactive = deactivateItems.deactivate(new DeactivateItemCommand(created.id(), 0));
         ItemCategory nowInactive = deactivateCategories.deactivate(
                 new DeactivateItemCategoryCommand(category.id(), category.version()));
 
-        Item noOp = deactivateItems.deactivate(new DeactivateItemCommand(inactive.id(), inactive.version()));
-        Item reactivated = activateItems.activate(new ActivateItemCommand(inactive.id(), inactive.version()));
-        Item lifecycleNoOp = activateItems.activate(new ActivateItemCommand(reactivated.id(), reactivated.version()));
+        ItemReadView noOp = deactivateItems.deactivate(new DeactivateItemCommand(inactive.id(), inactive.version()));
+        ItemReadView reactivated = activateItems.activate(new ActivateItemCommand(inactive.id(), inactive.version()));
+        ItemReadView lifecycleNoOp = activateItems.activate(new ActivateItemCommand(reactivated.id(), reactivated.version()));
 
         assertFalse(nowInactive.active());
         assertFalse(noOp.active());
@@ -184,14 +185,14 @@ class ItemApplicationIntegrationTest {
     @Test
     void optimisticItemUpdatesRejectStaleVersionWithoutOverwritingState() {
         ItemCategory category = insertCategory("Hardware", true);
-        Item created = createItems.create(new CreateItemCommand("Board", null, category.id()));
-        Item current = updateMetadata.updateMetadata(
+        ItemReadView created = createItems.create(new CreateItemCommand("Board", null, category.id()));
+        ItemReadView current = updateMetadata.updateMetadata(
                 new UpdateItemMetadataCommand(created.id(), "Current", null, created.version()));
 
         assertThrows(ItemConcurrentModificationException.class, () -> updateMetadata.updateMetadata(
                 new UpdateItemMetadataCommand(created.id(), "Stale", "stale", created.version())));
 
-        Item persisted = getItems.getById(created.id());
+        ItemReadView persisted = getItems.getById(created.id());
         assertEquals("Current", persisted.name());
         assertEquals(current.version(), persisted.version());
         assertNotEquals("Stale", persisted.name());
@@ -200,7 +201,7 @@ class ItemApplicationIntegrationTest {
     @Test
     void concurrentStaleItemUpdatesAllowOneCommitAndRejectTheOther() throws Exception {
         ItemCategory category = insertCategory("Hardware", true);
-        Item created = createItems.create(new CreateItemCommand("Board", null, category.id()));
+        ItemReadView created = createItems.create(new CreateItemCommand("Board", null, category.id()));
         CountDownLatch firstUpdatePrepared = new CountDownLatch(1);
         CountDownLatch firstUpdateMayCommit = new CountDownLatch(1);
         CountDownLatch staleUpdateStarted = new CountDownLatch(1);
@@ -208,15 +209,15 @@ class ItemApplicationIntegrationTest {
         AtomicInteger stalePid = new AtomicInteger();
         ExecutorService executor = Executors.newFixedThreadPool(2);
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
-        Future<Item> winningUpdate = null;
-        Future<Item> staleUpdate = null;
+        Future<ItemReadView> winningUpdate = null;
+        Future<ItemReadView> staleUpdate = null;
 
         try {
             winningUpdate = executor.submit(() -> transaction.execute(status -> {
                 firstPid.set(currentBackendPid());
                 jdbcTemplate.queryForObject(
                         "SELECT id FROM items WHERE id = ? FOR UPDATE", UUID.class, created.id());
-                Item updated = updateMetadata.updateMetadata(
+                ItemReadView updated = updateMetadata.updateMetadata(
                         new UpdateItemMetadataCommand(created.id(), "Winner", null, created.version()));
                 firstUpdatePrepared.countDown();
                 await(firstUpdateMayCommit, "winning Item update commit");
@@ -236,8 +237,8 @@ class ItemApplicationIntegrationTest {
             assertFalse(staleUpdate.isDone(), "stale update must wait for the winning transaction");
 
             firstUpdateMayCommit.countDown();
-            Item winner = winningUpdate.get(10, TimeUnit.SECONDS);
-            Future<Item> staleResult = staleUpdate;
+            ItemReadView winner = winningUpdate.get(10, TimeUnit.SECONDS);
+            Future<ItemReadView> staleResult = staleUpdate;
             ExecutionException rejected = assertThrows(ExecutionException.class,
                     () -> staleResult.get(10, TimeUnit.SECONDS));
             assertTrue(rejected.getCause() instanceof ItemConcurrentModificationException);
@@ -259,7 +260,7 @@ class ItemApplicationIntegrationTest {
         UUID[] createdId = new UUID[1];
 
         assertThrows(DeliberateRollback.class, () -> transaction.executeWithoutResult(status -> {
-            Item created = createItems.create(new CreateItemCommand("Rolled back", null, category.id()));
+            ItemReadView created = createItems.create(new CreateItemCommand("Rolled back", null, category.id()));
             createdId[0] = created.id();
             throw new DeliberateRollback();
         }));
@@ -272,7 +273,7 @@ class ItemApplicationIntegrationTest {
     void assignmentFirstSerializesBeforeDeactivationAndLeavesValidExistingReference() throws Exception {
         ItemCategory category = insertCategory("Create race", true);
 
-        RaceResult<Item> race = assignmentFirst(category, () -> createItems.create(
+        RaceResult<ItemReadView> race = assignmentFirst(category, () -> createItems.create(
                 new CreateItemCommand("Created before deactivate", null, category.id())));
 
         assertNotNull(race.assignmentResult());
@@ -286,7 +287,7 @@ class ItemApplicationIntegrationTest {
     void deactivationFirstMakesConcurrentCreateRejectInactiveCategory() throws Exception {
         ItemCategory category = insertCategory("Create race", true);
 
-        RaceResult<Item> race = deactivationFirst(category, () -> createItems.create(
+        RaceResult<ItemReadView> race = deactivationFirst(category, () -> createItems.create(
                 new CreateItemCommand("Rejected after deactivate", null, category.id())));
 
         assertTrue(race.assignmentFailure() instanceof InactiveItemCategoryException);
@@ -299,9 +300,9 @@ class ItemApplicationIntegrationTest {
     void reassignmentFirstSerializesBeforeTargetDeactivationAndRetainsReference() throws Exception {
         ItemCategory source = insertCategory("Source", true);
         ItemCategory target = insertCategory("Reassign target", true);
-        Item created = createItems.create(new CreateItemCommand("Reassigned", "metadata", source.id()));
+        ItemReadView created = createItems.create(new CreateItemCommand("Reassigned", "metadata", source.id()));
 
-        RaceResult<Item> race = assignmentFirst(target, () -> reassignCategory.reassignCategory(
+        RaceResult<ItemReadView> race = assignmentFirst(target, () -> reassignCategory.reassignCategory(
                 new ReassignItemCategoryCommand(created.id(), target.id(), created.version())));
 
         assertNotNull(race.assignmentResult());
@@ -317,9 +318,9 @@ class ItemApplicationIntegrationTest {
     void deactivationFirstMakesConcurrentReassignmentRejectAndPreserveItem() throws Exception {
         ItemCategory source = insertCategory("Source", true);
         ItemCategory target = insertCategory("Reassign target", true);
-        Item created = createItems.create(new CreateItemCommand("Unchanged", "details", source.id()));
+        ItemReadView created = createItems.create(new CreateItemCommand("Unchanged", "details", source.id()));
 
-        RaceResult<Item> race = deactivationFirst(target, () -> reassignCategory.reassignCategory(
+        RaceResult<ItemReadView> race = deactivationFirst(target, () -> reassignCategory.reassignCategory(
                 new ReassignItemCategoryCommand(created.id(), target.id(), created.version())));
 
         assertTrue(race.assignmentFailure() instanceof InactiveItemCategoryException);
@@ -335,18 +336,18 @@ class ItemApplicationIntegrationTest {
     @Test
     void listReturnsActiveAndInactiveItems() {
         ItemCategory category = insertCategory("Hardware", true);
-        Item active = createItems.create(new CreateItemCommand("Active", null, category.id()));
-        Item inactive = deactivateItems.deactivate(new DeactivateItemCommand(active.id(), active.version()));
-        Item second = createItems.create(new CreateItemCommand("Another", null, category.id()));
+        ItemReadView active = createItems.create(new CreateItemCommand("Active", null, category.id()));
+        ItemReadView inactive = deactivateItems.deactivate(new DeactivateItemCommand(active.id(), active.version()));
+        ItemReadView second = createItems.create(new CreateItemCommand("Another", null, category.id()));
 
-        List<Item> listed = listItems.listAll();
+        List<ItemReadView> listed = listItems.listAll();
 
         assertEquals(2, listed.size());
         assertTrue(listed.stream().anyMatch(item -> item.id().equals(inactive.id()) && !item.active()));
         assertTrue(listed.stream().anyMatch(item -> item.id().equals(second.id()) && item.active()));
     }
 
-    private RaceResult<Item> assignmentFirst(ItemCategory category, AssignmentAction assignment) throws Exception {
+    private RaceResult<ItemReadView> assignmentFirst(ItemCategory category, AssignmentAction assignment) throws Exception {
         CountDownLatch assignmentLockHeld = new CountDownLatch(1);
         CountDownLatch assignmentMayProceed = new CountDownLatch(1);
         CountDownLatch deactivationStarted = new CountDownLatch(1);
@@ -354,7 +355,7 @@ class ItemApplicationIntegrationTest {
         AtomicInteger deactivationPid = new AtomicInteger();
         ExecutorService executor = Executors.newFixedThreadPool(2);
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
-        Future<Item> assignmentFuture = null;
+        Future<ItemReadView> assignmentFuture = null;
         Future<ItemCategory> deactivationFuture = null;
 
         try {
@@ -379,7 +380,7 @@ class ItemApplicationIntegrationTest {
             assertFalse(deactivationFuture.isDone(), "deactivation must wait for assignment transaction");
 
             assignmentMayProceed.countDown();
-            Item assigned = assignmentFuture.get(10, TimeUnit.SECONDS);
+            ItemReadView assigned = assignmentFuture.get(10, TimeUnit.SECONDS);
             ItemCategory deactivated = deactivationFuture.get(10, TimeUnit.SECONDS);
             assertFalse(deactivated.active());
             return new RaceResult<>(assigned, null, deactivated, null);
@@ -392,7 +393,7 @@ class ItemApplicationIntegrationTest {
         }
     }
 
-    private RaceResult<Item> deactivationFirst(ItemCategory category, AssignmentAction assignment) throws Exception {
+    private RaceResult<ItemReadView> deactivationFirst(ItemCategory category, AssignmentAction assignment) throws Exception {
         CountDownLatch deactivationUpdated = new CountDownLatch(1);
         CountDownLatch deactivationMayCommit = new CountDownLatch(1);
         CountDownLatch assignmentStarted = new CountDownLatch(1);
@@ -401,7 +402,7 @@ class ItemApplicationIntegrationTest {
         ExecutorService executor = Executors.newFixedThreadPool(2);
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
         Future<ItemCategory> deactivationFuture = null;
-        Future<Item> assignmentFuture = null;
+        Future<ItemReadView> assignmentFuture = null;
 
         try {
             deactivationFuture = executor.submit(() -> transaction.execute(status -> {
@@ -427,7 +428,7 @@ class ItemApplicationIntegrationTest {
             deactivationMayCommit.countDown();
             ItemCategory deactivated = deactivationFuture.get(10, TimeUnit.SECONDS);
             try {
-                Item assigned = assignmentFuture.get(10, TimeUnit.SECONDS);
+                ItemReadView assigned = assignmentFuture.get(10, TimeUnit.SECONDS);
                 return new RaceResult<>(assigned, null, deactivated, null);
             } catch (ExecutionException exception) {
                 return new RaceResult<>(null, exception.getCause(), deactivated, null);
@@ -482,7 +483,7 @@ class ItemApplicationIntegrationTest {
 
     @FunctionalInterface
     private interface AssignmentAction {
-        Item run();
+        ItemReadView run();
     }
 
     private record RaceResult<T>(

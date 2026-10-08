@@ -4,6 +4,7 @@ import dev.akume.storage.catalog.application.exception.InactiveItemCategoryExcep
 import dev.akume.storage.catalog.application.exception.ItemCategoryNotFoundException;
 import dev.akume.storage.catalog.application.exception.ItemConcurrentModificationException;
 import dev.akume.storage.catalog.application.exception.ItemNotFoundException;
+import dev.akume.storage.catalog.application.model.ItemReadView;
 import dev.akume.storage.catalog.application.port.in.ActivateItemCommand;
 import dev.akume.storage.catalog.application.port.in.ActivateItemUseCase;
 import dev.akume.storage.catalog.application.port.in.CreateItemCommand;
@@ -17,6 +18,7 @@ import dev.akume.storage.catalog.application.port.in.ReassignItemCategoryUseCase
 import dev.akume.storage.catalog.application.port.in.UpdateItemMetadataCommand;
 import dev.akume.storage.catalog.application.port.in.UpdateItemMetadataUseCase;
 import dev.akume.storage.catalog.application.port.out.ItemCategoryAssignmentLock;
+import dev.akume.storage.catalog.application.port.out.ItemReadProjectionRepository;
 import dev.akume.storage.catalog.application.port.out.ItemRepository;
 import dev.akume.storage.catalog.domain.model.Item;
 import org.springframework.stereotype.Service;
@@ -39,81 +41,85 @@ public class ItemApplicationService implements
 
     private final ItemRepository items;
     private final ItemCategoryAssignmentLock categoryAssignmentLock;
+    private final ItemReadProjectionRepository itemViews;
 
     public ItemApplicationService(
             ItemRepository items,
-            ItemCategoryAssignmentLock categoryAssignmentLock) {
+            ItemCategoryAssignmentLock categoryAssignmentLock,
+            ItemReadProjectionRepository itemViews) {
         this.items = items;
         this.categoryAssignmentLock = categoryAssignmentLock;
+        this.itemViews = itemViews;
     }
 
     @Override
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public Item create(CreateItemCommand command) {
+    public ItemReadView create(CreateItemCommand command) {
         Item item = Item.create(command.name(), command.description(), command.itemCategoryId());
         requireActiveCategory(item.itemCategoryId());
-        return items.insert(item);
+        Item persisted = items.insert(item);
+        return findView(persisted.id());
     }
 
     @Override
     @Transactional(readOnly = true)
-    public List<Item> listAll() {
-        return items.findAll();
+    public List<ItemReadView> listAll() {
+        return itemViews.findAll();
     }
 
     @Override
     @Transactional(readOnly = true)
-    public Item getById(UUID id) {
-        return findById(id);
+    public ItemReadView getById(UUID id) {
+        return findView(id);
     }
 
     @Override
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public Item updateMetadata(UpdateItemMetadataCommand command) {
+    public ItemReadView updateMetadata(UpdateItemMetadataCommand command) {
         requireExpectedVersion(command.expectedVersion());
         Item item = findById(command.id());
         requireCurrentVersion(item, command.expectedVersion());
         item.updateDetails(command.name(), command.description());
-        return updateOrThrow(item);
+        return findView(updateOrThrow(item).id());
     }
 
     @Override
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public Item reassignCategory(ReassignItemCategoryCommand command) {
+    public ItemReadView reassignCategory(ReassignItemCategoryCommand command) {
         requireExpectedVersion(command.expectedVersion());
         Item item = findById(command.id());
         requireCurrentVersion(item, command.expectedVersion());
         item.reassignCategory(command.itemCategoryId());
         requireActiveCategory(item.itemCategoryId());
-        return updateOrThrow(item);
+        return findView(updateOrThrow(item).id());
     }
 
     @Override
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public Item activate(ActivateItemCommand command) {
+    public ItemReadView activate(ActivateItemCommand command) {
         requireExpectedVersion(command.expectedVersion());
         Item item = findById(command.id());
         requireCurrentVersion(item, command.expectedVersion());
         if (item.active()) {
-            return item;
+            return findView(item.id());
         }
 
         item.activate();
-        return updateOrThrow(item);
+        return findView(updateOrThrow(item).id());
     }
 
     @Override
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public Item deactivate(DeactivateItemCommand command) {
+    public ItemReadView deactivate(DeactivateItemCommand command) {
         requireExpectedVersion(command.expectedVersion());
         Item item = findById(command.id());
         requireCurrentVersion(item, command.expectedVersion());
         if (!item.active()) {
-            return item;
+            return findView(item.id());
         }
 
         item.deactivate();
-        return updateOrThrow(item);
+        return findView(updateOrThrow(item).id());
     }
 
     private void requireActiveCategory(UUID itemCategoryId) {
@@ -126,6 +132,10 @@ public class ItemApplicationService implements
 
     private Item findById(UUID id) {
         return items.findById(id).orElseThrow(() -> new ItemNotFoundException(id));
+    }
+
+    private ItemReadView findView(UUID id) {
+        return itemViews.findById(id).orElseThrow(() -> new ItemNotFoundException(id));
     }
 
     private Item updateOrThrow(Item item) {
