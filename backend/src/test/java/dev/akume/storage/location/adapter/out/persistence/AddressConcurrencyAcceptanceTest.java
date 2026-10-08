@@ -282,11 +282,64 @@ class AddressConcurrencyAcceptanceTest {
         Address parentAfter = reload(parent.id());
         Address childAfter = reload(child.id());
 
-        assertExactlyOneSuccessAndRejection(result);
-        assertRetryObserved(result);
-        assertEquals(2, writeGate.successfulArrivals().size(), result.diagnostics());
-        assertTrue(!childAfter.active() || parentAfter.active(), result.diagnostics());
-        assertEquals(parent.id(), childAfter.parentId());
+        String raceDiagnostics = result.diagnostics()
+                + ", persisted={parentActive=" + parentAfter.active()
+                + ", childActive=" + childAfter.active()
+                + ", childParentId=" + childAfter.parentId()
+                + ", expectedParentId=" + parent.id() + "}";
+
+        assertTrue(!childAfter.active() || parentAfter.active(), raceDiagnostics);
+        assertEquals(parent.id(), childAfter.parentId(), raceDiagnostics);
+        assertTrue(result.failedBeforeGate().isEmpty(), raceDiagnostics);
+        assertEquals(2, writeGate.successfulArrivals().size(), raceDiagnostics);
+
+        Outcome childOutcome = result.firstOutcome();
+        Outcome parentOutcome = result.secondOutcome();
+        String retriedActor = null;
+        String exhaustedActor = null;
+        Outcome exhaustedOutcome = null;
+        if (isSuccess(childOutcome)
+                && isSemanticRejection(parentOutcome, AddressHasActiveChildrenException.class)) {
+            retriedActor = "PARENT_DEACTIVATE";
+        } else if (isSuccess(parentOutcome)
+                && isSemanticRejection(childOutcome, InactiveAddressParentException.class)) {
+            retriedActor = "CHILD_ACTIVATE";
+        } else if (isSuccess(childOutcome) && isSerializationExhausted(parentOutcome)) {
+            exhaustedActor = "PARENT_DEACTIVATE";
+            exhaustedOutcome = parentOutcome;
+        } else if (isSuccess(parentOutcome) && isSerializationExhausted(childOutcome)) {
+            exhaustedActor = "CHILD_ACTIVATE";
+            exhaustedOutcome = childOutcome;
+        } else {
+            fail("unexpected Race D terminal outcome pair: " + raceDiagnostics);
+        }
+
+        if (retriedActor != null) {
+            List<Long> transactionIds = result.attempts().get(retriedActor);
+            assertTrue(transactionIds != null && transactionIds.size() >= 2,
+                    "expected semantic loser to retry in a fresh transaction for "
+                            + retriedActor + ": " + raceDiagnostics);
+            assertNotEquals(transactionIds.getFirst(), transactionIds.get(1),
+                    "semantic retry reused transaction for " + retriedActor + ": " + raceDiagnostics);
+        }
+
+        if (exhaustedActor != null) {
+            assertTrue(exhaustedOutcome.failure() != null
+                            && exhaustedOutcome.failure().getClass()
+                            == SerializableOperationConflictException.class,
+                    "exhaustion must be the executor's semantic exhaustion exception for "
+                            + exhaustedActor + ": " + raceDiagnostics);
+            List<Long> transactionIds = result.attempts().get(exhaustedActor);
+            assertTrue(transactionIds != null,
+                    "missing transaction attempts for exhausted actor "
+                            + exhaustedActor + ": " + raceDiagnostics);
+            assertEquals(3, transactionIds.size(),
+                    "executor exhaustion requires three transaction attempts for "
+                            + exhaustedActor + ": " + raceDiagnostics);
+            assertEquals(3, transactionIds.stream().distinct().count(),
+                    "exhaustion attempts must use distinct PostgreSQL transactions for "
+                            + exhaustedActor + ": " + raceDiagnostics);
+        }
     }
 
     @Test
